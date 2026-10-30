@@ -1,11 +1,15 @@
 package com.rbdip.bookstore.order;
 
-import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
-public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
+interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
 
-    // Намеренно нет @EntityGraph/JOIN FETCH-варианта - используется в цикле
-    // контроллером, что и создаёт N+1 (см. OrderController#listOrders).
-    List<OrderItem> findByOrderId(Long orderId);
+    @Query("select count(i) > 0 from OrderItem i"
+            + " where i.product.id = :productId"
+            + " and i.order.customer.firstName = :firstName"
+            + " and i.order.customer.lastName = :lastName")
+    boolean existsPurchase(
+            @Param("firstName") String firstName, @Param("lastName") String lastName, @Param("productId") Long productId);
 }

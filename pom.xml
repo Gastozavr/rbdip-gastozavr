@@ -216,6 +216,10 @@
                          lab5_mutation оценивает только тесты, написанные студентом. -->
                     <excludedTestClasses>
                         <param>com.rbdip.bookstore.reference.*</param>
+                        <!-- Интеграционные тесты (Testcontainers) поднимают БД и
+                             Spring-контекст на каждый мутант - для PIT слишком
+                             медленно; PricingCalculator покрыт юнит-тестами. -->
+                        <param>com.rbdip.bookstore.*IntegrationTest</param>
                     </excludedTestClasses>
                     <mutationThreshold>60</mutationThreshold>
                     <outputFormats>

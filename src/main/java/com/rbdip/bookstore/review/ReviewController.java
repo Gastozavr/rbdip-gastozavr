@@ -25,8 +25,8 @@ public class ReviewController {
         String authorName = (String) body.get("authorName");
         Integer rating = (Integer) body.get("rating");
         String comment = (String) body.get("comment");
-        Review review = reviewService.addReview(productId, authorName, rating, comment);
-        return Map.of("id", review.getId());
+        ReviewService.AddedReview review = reviewService.addReview(productId, authorName, rating, comment);
+        return Map.of("id", review.id(), "verifiedPurchase", review.verifiedPurchase());
     }
 
     @GetMapping("/products/{productId}/reviews")

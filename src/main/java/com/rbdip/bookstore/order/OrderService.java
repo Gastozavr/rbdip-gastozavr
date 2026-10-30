@@ -1,81 +1,72 @@
 package com.rbdip.bookstore.order;
 
+import com.rbdip.bookstore.customer.Customer;
+import com.rbdip.bookstore.customer.CustomerService;
 import com.rbdip.bookstore.product.Product;
 import com.rbdip.bookstore.product.ProductRepository;
 import java.math.BigDecimal;
-import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * God-класс: валидация, расчёт цены, персистентность и "уведомление
- * клиента" смешаны в одном методе. Цель для рефакторинга по SRP в ЛР1.
+ * Сценарии работы с заказами. Только оркестрирует шаги - валидация,
+ * клиент, расчёт цены и уведомление вынесены в отдельные классы.
  */
 @Service
 public class OrderService {
 
+    private final OrderValidator validator;
+    private final CustomerService customerService;
     private final ProductRepository productRepository;
     private final OrderRepository orderRepository;
-    private final OrderItemRepository orderItemRepository;
-    private final PricingCalculator pricingCalculator = new PricingCalculator();
+    private final PricingCalculator pricingCalculator;
+    private final OrderNotifier notifier;
 
     public OrderService(
+            OrderValidator validator,
+            CustomerService customerService,
             ProductRepository productRepository,
             OrderRepository orderRepository,
-            OrderItemRepository orderItemRepository) {
+            PricingCalculator pricingCalculator,
+            OrderNotifier notifier) {
+        this.validator = validator;
+        this.customerService = customerService;
         this.productRepository = productRepository;
         this.orderRepository = orderRepository;
-        this.orderItemRepository = orderItemRepository;
+        this.pricingCalculator = pricingCalculator;
+        this.notifier = notifier;
     }
 
     @Transactional
     public Order createOrder(CreateOrderRequest request) {
-        if (request.customerFullName() == null || request.customerFullName().isBlank()) {
-            throw new IllegalArgumentException("customerFullName is required");
+        validator.validate(request);
+        Customer customer = customerService.findOrCreate(
+                request.customerFullName(), request.customerAddress(), request.customerPhone());
+        Order order = new Order(customer, Order.STATUS_NEW);
+        for (CreateOrderRequest.Item item : request.items()) {
+            order.addItem(findProduct(item.productId()), item.quantityOrDefault());
         }
-        if (request.customerAddress() == null || request.customerAddress().isBlank()) {
-            throw new IllegalArgumentException("customerAddress is required");
-        }
-        if (request.items() == null || request.items().isEmpty()) {
-            throw new IllegalArgumentException("order must contain at least one item");
-        }
-
-        List<Product> products = new ArrayList<>();
-        List<PricingCalculator.LineItem> lineItems = new ArrayList<>();
-        for (CreateOrderRequest.Item raw : request.items()) {
-            Product product = productRepository.findById(raw.productId())
-                    .orElseThrow(() -> new IllegalArgumentException("product " + raw.productId() + " not found"));
-            int quantity = raw.quantity() == null ? 1 : raw.quantity();
-            if (quantity <= 0) {
-                throw new IllegalArgumentException("quantity must be positive");
-            }
-            products.add(product);
-            lineItems.add(new PricingCalculator.LineItem(product.getPrice(), quantity));
-        }
-
         BigDecimal total = pricingCalculator.calculateOrderTotal(
-                lineItems, request.customerType() == null ? "regular" : request.customerType(), request.couponCode());
-
-        Order order = new Order(
-                request.customerFullName(), request.customerAddress(), request.customerPhone(), "new");
-        order = orderRepository.save(order);
-
-        for (int i = 0; i < products.size(); i++) {
-            Product product = products.get(i);
-            int quantity = lineItems.get(i).quantity();
-            orderItemRepository.save(new OrderItem(order.getId(), product.getName(), product.getPrice(), quantity));
-        }
-
-        sendConfirmationEmail(request.customerFullName(), order.getId(), total);
-
-        return order;
+                toLineItems(order), request.customerTypeOrDefault(), request.couponCode());
+        Order saved = orderRepository.save(order);
+        notifier.orderPlaced(saved, total);
+        return saved;
     }
 
-    private void sendConfirmationEmail(String customerName, Long orderId, BigDecimal total) {
-        // Реальный почтовый транспорт не настроен в учебном проекте - здесь
-        // просто эмулируется побочный эффект отправки письма.
-        System.out.printf(
-                "[email] Dear %s, your order #%d for %s has been placed.%n", customerName, orderId, total);
+    @Transactional(readOnly = true)
+    public List<Order> findAllWithItems() {
+        return orderRepository.findAllWithItems();
+    }
+
+    private Product findProduct(Long productId) {
+        return productRepository.findById(productId)
+                .orElseThrow(() -> new IllegalArgumentException("product " + productId + " not found"));
+    }
+
+    private static List<PricingCalculator.LineItem> toLineItems(Order order) {
+        return order.getItems().stream()
+                .map(item -> new PricingCalculator.LineItem(item.getProduct().getPrice(), item.getQuantity()))
+                .toList();
     }
 }
